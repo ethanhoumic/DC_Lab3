@@ -69,13 +69,17 @@ module AudDSP (
         mode_w = mode_r;
 
         if (fetch_state_r == 3'd0) begin  // Capture at idle
-            speed_w = i_speed;
-            if (i_fast) begin
-                mode_w = MODE_FAST;
-            end else if (i_slow_0) begin
-                mode_w = MODE_SLOW_0;
-            end else begin
-                mode_w = MODE_SLOW_1;
+            if (i_start) begin
+                speed_w = i_speed;
+                if (i_fast) begin
+                    mode_w = MODE_FAST;
+                end
+                else if (i_slow_0) begin
+                    mode_w = MODE_SLOW_0;
+                end
+                else begin
+                    mode_w = MODE_SLOW_1;
+                end
             end
         end
     end
@@ -95,17 +99,41 @@ module AudDSP (
             3'd0: begin  // IDLE - wait for start
                 if (i_start && !playing_r) begin
                     addr_w = 20'd0;
-                    sram_addr_w = 20'd0;
+                    sram_addr_w = 20'd0;  // Pre-request first address
                     interp_cnt_w = 4'd0;
                     playing_w = 1'b1;
-                    fetch_state_w = 3'd1;  // Start fetching
+                    fetch_state_w = 3'd1;  // Go to pre-fetch
                 end
             end
 
-            3'd1: begin  // Wait for DACLRCK negedge to sync
-                if (daclrck_negedge && playing_r) begin
-                    sram_addr_w = addr_r;
-                    fetch_state_w = 3'd2;
+            3'd1: begin  // PRE-FETCH - get first sample before sync
+                if (playing_r) begin
+                    // Capture first sample immediately
+                    case (mode_r)
+                        MODE_FAST: begin
+                            curr_sample_w = i_sram_data;
+                            output_w = i_sram_data;
+                        end
+                        
+                        MODE_SLOW_0: begin
+                            curr_sample_w = i_sram_data;
+                            output_w = i_sram_data;
+                        end
+                        
+                        MODE_SLOW_1: begin
+                            curr_sample_w = i_sram_data;
+                            sram_addr_w = addr_r + 1;
+                            // Need to fetch next sample too
+                        end
+                    endcase
+                    fetch_state_w = 3'd6;  // New state: wait for sync
+                end
+            end
+
+            3'd6: begin  // SYNC - wait for first posedge with data ready
+                if (daclrck_posedge && playing_r) begin
+                    fetch_state_w = 3'd4;  // Go to WAIT state
+                    // Output is already set in 3'd1
                 end
             end
 
@@ -128,8 +156,10 @@ module AudDSP (
                         MODE_SLOW_0: begin
                             if (interp_cnt_r == 4'd0) begin
                                 curr_sample_w = i_sram_data;
+                                output_w = i_sram_data;  // FIXED: output immediately
+                            end else begin
+                                output_w = curr_sample_r;
                             end
-                            output_w = curr_sample_r;
                             fetch_state_w = 3'd4;
                         end
 
@@ -200,7 +230,7 @@ module AudDSP (
             sram_addr_r <= 20'd0;
             curr_sample_r <= 16'd0;
             next_sample_r <= 16'd0;
-            output_r <= 16'd0;
+            output_r <= 16'd9999;  // For distinguishment from reset and data at addr = 0
             fetch_state_r <= 3'd0;
             daclrck_prev_r <= 1'b0;
             playing_r <= 1'b0;

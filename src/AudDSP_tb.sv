@@ -203,26 +203,26 @@ module tb_AudDSP;
         init_memory("linear");
 
         // Fast mode tests
-        test_fast(2, 5);
+        test_fast(2, 10);
         reset_system();
         
-        test_fast(4, 5);
+        test_fast(4, 10);
         reset_system();
 
         // Slow constant tests
         init_memory("linear");
-        test_slow_const(2, 6);
+        test_slow_const(2, 10);
         reset_system();
         
-        test_slow_const(4, 8);
+        test_slow_const(4, 20);
         reset_system();
 
         // Slow linear tests
         init_memory("linear");
-        test_slow_linear(2, 6);
+        test_slow_linear(2, 10);
         reset_system();
         
-        test_slow_linear(4, 8);
+        test_slow_linear(4, 20);
         reset_system();
 
         $display("\n*** AudDSP Tests Complete ***\n");
