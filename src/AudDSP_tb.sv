@@ -39,7 +39,8 @@ module tb_AudDSP;
 
     initial begin
         daclrck = 0;
-        forever #15625 daclrck = ~daclrck;  // 32kHz
+        // forever #15625 daclrck = ~daclrck;  // 32kHz
+        forever #110 daclrck = ~daclrck; // for simulation
     end
 
     // Memory model
@@ -124,7 +125,7 @@ module tb_AudDSP;
         fast = 0;
         slow_0 = 0;
         slow_1 = 0;
-        repeat(5) @(posedge clk);
+        repeat(2) @(posedge clk);
         rst_n = 1;
         repeat(2) @(posedge clk);
     endtask
@@ -203,10 +204,10 @@ module tb_AudDSP;
         init_memory("linear");
 
         // Fast mode tests
-        test_fast(2, 10);
+        test_fast(3, 10);
         reset_system();
         
-        test_fast(4, 10);
+        test_fast(6, 10);
         reset_system();
 
         // Slow constant tests
@@ -219,10 +220,10 @@ module tb_AudDSP;
 
         // Slow linear tests
         init_memory("linear");
-        test_slow_linear(2, 10);
+        test_slow_linear(3, 10);
         reset_system();
         
-        test_slow_linear(4, 20);
+        test_slow_linear(5, 20);
         reset_system();
 
         $display("\n*** AudDSP Tests Complete ***\n");

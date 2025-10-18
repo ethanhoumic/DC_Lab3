@@ -133,6 +133,10 @@ module AudDSP (
 
             3'd6: begin  // SYNC - wait for first posedge with data ready
                 if (daclrck_posedge && playing_r) begin
+                    if (mode_r == MODE_SLOW_1) begin
+                        output_w = interpolated;
+                        next_sample_w = i_sram_data;
+                    end
                     fetch_state_w = 3'd4;  // Go to WAIT state
                     // Output is already set in 3'd1
                 end
@@ -140,7 +144,7 @@ module AudDSP (
 
             3'd2: begin  // REQUEST - set SRAM address
                 if (playing_r) begin
-                    sram_addr_w = addr_r;
+                    if (mode_r != MODE_SLOW_1) sram_addr_w = addr_r;
                     fetch_state_w = 3'd3;
                 end
             end
@@ -180,13 +184,13 @@ module AudDSP (
 
             3'd5: begin  // CAPTURE_NEXT (for linear interpolation)
                 if (playing_r) begin
-                    next_sample_w = i_sram_data;
                     output_w = interpolated;
                     fetch_state_w = 3'd4;
                 end
             end
 
             3'd4: begin  // WAIT - wait for DACLRCK negedge, then update address
+                next_sample_w = i_sram_data;
                 if (daclrck_negedge && playing_r) begin
                     case (mode_r)
                         MODE_FAST: begin
