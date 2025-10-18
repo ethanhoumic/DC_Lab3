@@ -123,6 +123,7 @@ module AudDSP (
                         MODE_SLOW_1: begin
                             curr_sample_w = i_sram_data;
                             sram_addr_w = addr_r + 1;
+                            output_w = i_sram_data;
                             // Need to fetch next sample too
                         end
                     endcase
@@ -190,9 +191,19 @@ module AudDSP (
                     case (mode_r)
                         MODE_FAST: begin
                             addr_w = addr_r + speed_r;
+                            sram_addr_w = addr_r + speed_r;
                         end
                         
-                        MODE_SLOW_0, MODE_SLOW_1: begin
+                        MODE_SLOW_0: begin
+                            if (interp_cnt_r >= speed_r - 1) begin
+                                interp_cnt_w = 4'd0;
+                                addr_w = addr_r + 1;
+                                sram_addr_w = addr_r + 1;
+                            end else begin
+                                interp_cnt_w = interp_cnt_r + 1;
+                            end
+                        end
+                        MODE_SLOW_1: begin
                             if (interp_cnt_r >= speed_r - 1) begin
                                 interp_cnt_w = 4'd0;
                                 addr_w = addr_r + 1;
