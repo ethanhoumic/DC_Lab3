@@ -3,6 +3,7 @@ module AudDSP (
     input                i_clk,
     input                i_start,
     input                i_pause,
+    input                i_resume,
     input                i_stop,
     input         [3:0]  i_speed,  // 2 ~ 8
     input                i_fast,
@@ -20,6 +21,16 @@ module AudDSP (
         MODE_SLOW_1  = 2
     } mode_t;
 
+    typedef enum logic [2:0] { 
+        S_IDLE     = 3'b000,
+        S_PREFETCH = 3'b001,
+        S_SYNC     = 3'b110,
+        S_REQUEST  = 3'b010,
+        S_CAPTURE  = 3'b011,
+        S_CAPNEXT  = 3'b101,
+        S_WAIT     = 3'b100
+    } state;
+
     mode_t mode_r, mode_w;
 
     logic [3:0]  speed_r, speed_w;
@@ -31,7 +42,7 @@ module AudDSP (
     logic signed [15:0] next_sample_r, next_sample_w;
     logic signed [15:0] output_r, output_w;
     
-    logic [2:0]  fetch_state_r, fetch_state_w;
+    state [2:0]  fetch_state_r, fetch_state_w;
     logic        daclrck_prev_r;
     logic        playing_r, playing_w;
 
@@ -68,7 +79,7 @@ module AudDSP (
         speed_w = speed_r;
         mode_w = mode_r;
 
-        if (fetch_state_r == 3'd0) begin  // Capture at idle
+        if (fetch_state_r == S_IDLE) begin  // Capture at idle
             if (i_start) begin
                 speed_w = i_speed;
                 if (i_fast) begin
@@ -96,17 +107,21 @@ module AudDSP (
         playing_w = playing_r;
 
         case (fetch_state_r)
-            3'd0: begin  // IDLE - wait for start
+            S_IDLE: begin  // IDLE - wait for start
                 if (i_start && !playing_r) begin
                     addr_w = 20'd0;
                     sram_addr_w = 20'd0;  // Pre-request first address
                     interp_cnt_w = 4'd0;
                     playing_w = 1'b1;
-                    fetch_state_w = 3'd1;  // Go to pre-fetch
+                    fetch_state_w = S_PREFETCH;  // Go to pre-fetch
+                end
+                else if (i_resume && !playing_r) begin
+                    playing_w = 1'b1;
+                    fetch_state_w = S_PREFETCH;
                 end
             end
 
-            3'd1: begin  // PRE-FETCH - get first sample before sync
+            S_PREFETCH: begin  // PRE-FETCH - get first sample before sync
                 if (playing_r) begin
                     // Capture first sample immediately
                     case (mode_r)
@@ -127,35 +142,35 @@ module AudDSP (
                             // Need to fetch next sample too
                         end
                     endcase
-                    fetch_state_w = 3'd6;  // New state: wait for sync
+                    fetch_state_w = S_SYNC;  // New state: wait for sync
                 end
             end
 
-            3'd6: begin  // SYNC - wait for first posedge with data ready
+            S_SYNC: begin  // SYNC - wait for first posedge with data ready
                 if (daclrck_posedge && playing_r) begin
                     if (mode_r == MODE_SLOW_1) begin
                         output_w = interpolated;
                         next_sample_w = i_sram_data;
                     end
-                    fetch_state_w = 3'd4;  // Go to WAIT state
+                    fetch_state_w = S_WAIT;  // Go to WAIT state
                     // Output is already set in 3'd1
                 end
             end
 
-            3'd2: begin  // REQUEST - set SRAM address
+            S_REQUEST: begin  // REQUEST - set SRAM address
                 if (playing_r) begin
                     if (mode_r != MODE_SLOW_1) sram_addr_w = addr_r;
-                    fetch_state_w = 3'd3;
+                    fetch_state_w = S_CAPTURE;
                 end
             end
 
-            3'd3: begin  // CAPTURE - get data from SRAM
+            S_CAPTURE: begin  // CAPTURE - get data from SRAM
                 if (playing_r) begin
                     case (mode_r)
                         MODE_FAST: begin
                             curr_sample_w = i_sram_data;
                             output_w = i_sram_data;
-                            fetch_state_w = 3'd4;  // Done, wait for DACLRCK
+                            fetch_state_w = S_WAIT;  // Done, wait for DACLRCK
                         end
 
                         MODE_SLOW_0: begin
@@ -165,31 +180,31 @@ module AudDSP (
                             end else begin
                                 output_w = curr_sample_r;
                             end
-                            fetch_state_w = 3'd4;
+                            fetch_state_w = S_WAIT;
                         end
 
                         MODE_SLOW_1: begin
                             if (interp_cnt_r == 4'd0) begin
                                 curr_sample_w = i_sram_data;
                                 sram_addr_w = addr_r + 1;  // Request next sample
-                                fetch_state_w = 3'd5;  // Need to fetch next sample
+                                fetch_state_w = S_CAPNEXT;  // Need to fetch next sample
                             end else begin
                                 output_w = interpolated;
-                                fetch_state_w = 3'd4;
+                                fetch_state_w = S_WAIT;
                             end
                         end
                     endcase
                 end
             end
 
-            3'd5: begin  // CAPTURE_NEXT (for linear interpolation)
+            S_CAPNEXT: begin  // CAPTURE_NEXT (for linear interpolation)
                 if (playing_r) begin
                     output_w = interpolated;
-                    fetch_state_w = 3'd4;
+                    fetch_state_w = S_WAIT;
                 end
             end
 
-            3'd4: begin  // WAIT - wait for DACLRCK negedge, then update address
+            S_WAIT: begin  // WAIT - wait for DACLRCK negedge, then update address
                 next_sample_w = i_sram_data;
                 if (daclrck_negedge && playing_r) begin
                     case (mode_r)
@@ -216,7 +231,7 @@ module AudDSP (
                             end
                         end
                     endcase
-                    fetch_state_w = 3'd2;  // Go back to request next sample
+                    fetch_state_w = S_REQUEST;  // Go back to request next sample
                 end
             end
         endcase
@@ -224,12 +239,13 @@ module AudDSP (
         // Control overrides
         if (i_pause) begin
             playing_w = 1'b0;
-            fetch_state_w = 3'd0;
+            fetch_state_w = S_IDLE;
         end
         
         if (i_stop || addr_r >= 20'd1023999) begin
+            addr_w = 0;
             playing_w = 1'b0;
-            fetch_state_w = 3'd0;
+            fetch_state_w = S_IDLE;
         end
     end
 
@@ -245,8 +261,8 @@ module AudDSP (
             sram_addr_r <= 20'd0;
             curr_sample_r <= 16'd0;
             next_sample_r <= 16'd0;
-            output_r <= 16'd9999;  // For distinguishment from reset and data at addr = 0
-            fetch_state_r <= 3'd0;
+            output_r <= 16'd0;
+            fetch_state_r <= S_IDLE;
             daclrck_prev_r <= 1'b0;
             playing_r <= 1'b0;
         end else begin
